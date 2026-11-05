@@ -20,6 +20,19 @@ microservicios importan sus Outputs con `${cf:infra-compartida-dev.<Output>}`.
 
 ## Despliegue
 
+**Guía completa paso a paso: [DESPLIEGUE.md](DESPLIEGUE.md)** — incluye el
+orden de los 7 stacks, los seeds, los problemas conocidos y cómo borrar todo
+al final del ciclo.
+
+Resumen:
+
+### 0. Requisitos
+
+- AWS CLI v2 y credenciales del Learner Lab (caducan cada ~4 h)
+- **Docker corriendo**: lo necesita `serverless-python-requirements` para
+  compilar `psycopg` contra Amazon Linux
+- `psql` para `bases.sh` (`sudo apt install postgresql-client`)
+
 ### 1. Parámetros en SSM (una sola vez, antes del primer deploy)
 
 Los secretos no van en el `serverless.yml`. Se cargan con:
@@ -31,10 +44,13 @@ Los secretos no van en el `serverless.yml`. Se cargan con:
 ### 2. Desplegar
 
 ```bash
-pip install -r requirements.txt
-npm install
-sls deploy
+npm install            # instala Serverless v3 y el plugin de Python
+npx serverless deploy
 ```
+
+> **Serverless v3 a propósito.** La v4 exige una cuenta de serverless.com y un
+> `SERVERLESS_ACCESS_KEY` en cada deploy; la v3 solo necesita credenciales de
+> AWS, que es lo único que da el Learner Lab.
 
 ### 3. Crear las databases y los schemas por tenant
 
@@ -49,8 +65,15 @@ microservicio con permiso solo sobre su database.
 ### 4. Verificar
 
 ```bash
-sls info --verbose     # los Outputs que consumen los demás repos
+npx serverless info --verbose   # los Outputs que consumen los demás repos
+./verificar-sistema.sh          # prueba los 6 microservicios de punta a punta
 ```
+
+`verificar-sistema.sh` descubre las URLs por CloudFormation, entra con dos
+tenants y comprueba los tres pilares: que ningún tenant vea datos del otro, que
+los 6 devuelvan 401 sin token, y que **completar una tarea cambie el avance del
+proyecto sin que nadie llame a ms-portafolios**. Revisa además las 4 colas y sus
+DLQ. Es lo que se corre en vivo en la exposición.
 
 ## Decisiones que afectan a todo el equipo
 
