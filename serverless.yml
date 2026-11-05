@@ -34,7 +34,11 @@ plugins:
 
 custom:
   pythonRequirements:
-    dockerizePip: non-linux
+    # true, no "non-linux": en Linux "non-linux" NO usa Docker y busca un
+    # binario python3.12 local, que no existe (el sistema trae 3.14).
+    # Forzar Docker ademas garantiza que psycopg se compile contra Amazon
+    # Linux, que es donde corre la Lambda.
+    dockerizePip: true
     slim: true
 
 functions:
@@ -123,7 +127,11 @@ resources:
       Properties:
         DBInstanceIdentifier: ppm-rds-${sls:stage}
         Engine: postgres
-        EngineVersion: "16.4"
+        # 16.15: la 16.4 ya no la ofrece AWS. Las versiones disponibles se
+        # consultan con:
+        #   aws rds describe-orderable-db-instance-options --engine postgres \
+        #     --db-instance-class db.t3.micro --query '*[].EngineVersion'
+        EngineVersion: "16.15"
         DBInstanceClass: db.t3.micro
         AllocatedStorage: "20"
         StorageType: gp2

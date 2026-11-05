@@ -171,6 +171,21 @@ En *App settings → Environment variables*, las 6 `NEXT_PUBLIC_API_*`.
 | 403 en la segunda ruta con el mismo token | política del authorizer cacheada por método | ya está resuelto: usa recurso comodín |
 | `psql: command not found` en `bases.sh` | falta el cliente de Postgres | `sudo apt install postgresql-client` |
 | El RDS no responde | tarda 5-10 min en quedar disponible | esperar |
+| `spawn python3.12 ENOENT` | `dockerizePip: non-linux` **no** usa Docker estando en Linux, y busca un `python3.12` local | ya está resuelto: los 7 repos usan `dockerizePip: true` |
+| `Cannot find version X for postgres` | AWS retira versiones de motor con el tiempo | consultar las vigentes (abajo) y ajustar `EngineVersion` |
+| `must be able to SET ROLE "<usuario>"` | en RDS el usuario maestro **no** es superusuario | ya está resuelto: `bases.sh` hace `GRANT <usuario> TO <admin>` antes de crear los schemas |
+| `Warning: Invalid configuration at provider.runtime` | el esquema de Serverless v3.40 no conoce `python3.12` | **es solo un aviso**, el deploy funciona y AWS acepta el runtime |
+
+### Consultar las versiones de PostgreSQL vigentes
+
+```bash
+aws rds describe-orderable-db-instance-options --engine postgres \
+  --db-instance-class db.t3.micro \
+  --query 'OrderableDBInstanceOptions[].EngineVersion' --output text \
+  | tr '\t' '\n' | sort -uV | tail -10
+```
+
+Las versiones de motor **se consultan, no se asumen**: AWS las va retirando.
 
 ## Para borrar todo al final del ciclo
 
