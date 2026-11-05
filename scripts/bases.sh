@@ -27,6 +27,11 @@ for ms in portafolios recursos presupuestos; do
   psql_admin "CREATE USER $USER WITH PASSWORD '$PASS';" || echo "   (usuario ya existia)"
   psql_admin "GRANT ALL PRIVILEGES ON DATABASE $DB TO $USER;"
 
+  # En RDS el usuario maestro NO es superusuario: para crear un schema que
+  # pertenezca a otro rol hay que ser miembro de ese rol primero. Sin esto
+  # falla con: must be able to SET ROLE "<usuario>".
+  psql_admin "GRANT $USER TO $ADMIN;"
+
   # Un schema por tenant: patron Single Database, Multiple Schemas
   for t in t_acme t_globex t_initech; do
     psql_admin "CREATE SCHEMA IF NOT EXISTS $t AUTHORIZATION $USER;" "$DB"
