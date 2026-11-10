@@ -24,7 +24,24 @@ rojo()    { printf '  \033[31mFALLO\033[0m  %s\n' "$1"; fallo=$((fallo+1)); }
 gris()    { printf '  \033[90mOMIT\033[0m  %s\n' "$1"; omitido=$((omitido+1)); }
 titulo()  { printf '\n\033[1m%s\033[0m\n' "$1"; }
 codigo()  { curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$@"; }
-json()    { python3 -c "import sys,json;d=json.load(sys.stdin);print(eval('d$1'))" 2>/dev/null; }
+# Extrae un valor del JSON por una ruta con puntos: json datos.token
+# No usa eval: la version anterior generaba eval('d['datos']['token']') y las
+# comillas simples chocaban, asi que SIEMPRE devolvia vacio y el script
+# reportaba fallos que no existian.
+json() {
+  python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for k in sys.argv[1].split("."):
+    if d is None:
+        break
+    d = d[int(k)] if k.lstrip("-").isdigit() else d.get(k)
+print("" if d is None else d)
+' "$1" 2>/dev/null
+}
 
 # ---------------------------------------------------------------- descubrir
 titulo "0. Descubriendo los microservicios desplegados"
@@ -57,8 +74,8 @@ entrar() {
     -d "{\"tenant_id\":\"$1\",\"email\":\"$2\",\"password\":\"$PASS\"}"
 }
 
-TOK_A=$(entrar t-acme   admin@acme.com.pe | json "['datos']['token']")
-TOK_G=$(entrar t-globex admin@globex.com  | json "['datos']['token']")
+TOK_A=$(entrar t-acme   admin@acme.com.pe | json datos.token)
+TOK_G=$(entrar t-globex admin@globex.com  | json datos.token)
 
 [ -n "$TOK_A" ] && verde "Acme devuelve token"   || rojo "Acme no devolvio token"
 [ -n "$TOK_G" ] && verde "Globex devuelve token" || rojo "Globex no devolvio token"
@@ -71,7 +88,7 @@ cG=(-H "Authorization: Bearer $TOK_G")
 for par in "identidad:t-acme:A" "identidad:t-globex:G"; do
   IFS=: read -r s esperado tok <<< "$par"
   t=$([ "$tok" = A ] && curl -s "${URL[$s]}/health" "${cA[@]}" || curl -s "${URL[$s]}/health" "${cG[@]}")
-  real=$(echo "$t" | json "['datos']['tenant']")
+  real=$(echo "$t" | json datos.tenant)
   [ "$real" = "$esperado" ] && verde "el token se resuelve a $esperado" \
     || rojo "el token se resuelve a '$real', se esperaba $esperado"
 done
@@ -96,12 +113,12 @@ done
 titulo "4. AISLAMIENTO: cada tenant solo ve lo suyo"
 
 if [ -n "${URL[portafolios]:-}" ]; then
-  nA=$(curl -s "${URL[portafolios]}/proyectos?limite=1" "${cA[@]}" | json "['meta']['total']")
-  nG=$(curl -s "${URL[portafolios]}/proyectos?limite=1" "${cG[@]}" | json "['meta']['total']")
+  nA=$(curl -s "${URL[portafolios]}/proyectos?limite=1" "${cA[@]}" | json meta.total)
+  nG=$(curl -s "${URL[portafolios]}/proyectos?limite=1" "${cG[@]}" | json meta.total)
   verde "Acme ve $nA proyectos · Globex ve $nG proyectos"
 
-  pA=$(curl -s "${URL[portafolios]}/proyectos?limite=1" "${cA[@]}" | json "['datos'][0]['codigo']")
-  pG=$(curl -s "${URL[portafolios]}/proyectos?limite=1" "${cG[@]}" | json "['datos'][0]['codigo']")
+  pA=$(curl -s "${URL[portafolios]}/proyectos?limite=1" "${cA[@]}" | json datos.0.codigo)
+  pG=$(curl -s "${URL[portafolios]}/proyectos?limite=1" "${cG[@]}" | json datos.0.codigo)
   [ -n "$pA" ] && [ "$pA" != "$pG" ] \
     && verde "los codigos difieren: Acme '$pA' vs Globex '$pG'" \
     || rojo "los dos tenants devuelven el mismo proyecto: '$pA'"
@@ -121,20 +138,20 @@ titulo "5. EDA: completar una tarea recalcula el avance sin llamar a nadie mas"
 
 if [ -n "${URL[tareas]:-}" ] && [ -n "${URL[portafolios]:-}" ]; then
   # Un proyecto en curso con tareas pendientes
-  PID=$(curl -s "${URL[portafolios]}/proyectos?estado=en_curso&limite=1" "${cA[@]}" | json "['datos'][0]['id']")
+  PID=$(curl -s "${URL[portafolios]}/proyectos?estado=en_curso&limite=1" "${cA[@]}" | json datos.0.id)
   if [ -n "$PID" ]; then
-    ANTES=$(curl -s "${URL[portafolios]}/proyectos/$PID" "${cA[@]}" | json "['datos']['avance_pct']")
-    TID=$(curl -s "${URL[tareas]}/proyectos/$PID/tareas?estado=pendiente&limite=1" "${cA[@]}" | json "['datos'][0]['tarea_id']")
+    ANTES=$(curl -s "${URL[portafolios]}/proyectos/$PID" "${cA[@]}" | json datos.avance_pct)
+    TID=$(curl -s "${URL[tareas]}/proyectos/$PID/tareas?estado=pendiente&limite=1" "${cA[@]}" | json datos.0.tarea_id)
 
     if [ -n "$TID" ]; then
       r=$(curl -s -X POST "${URL[tareas]}/proyectos/$PID/tareas/$TID/completar" "${cA[@]}")
-      nuevo=$(echo "$r" | json "['datos']['proyecto']['avance_pct']")
+      nuevo=$(echo "$r" | json datos.proyecto.avance_pct)
       verde "tarea completada · ms-tareas dice que el avance es $nuevo%"
 
       printf '         esperando a que el worker procese el evento'
       for i in 1 2 3 4 5 6 7 8 9 10; do
         sleep 2; printf '.'
-        DESPUES=$(curl -s "${URL[portafolios]}/proyectos/$PID" "${cA[@]}" | json "['datos']['avance_pct']")
+        DESPUES=$(curl -s "${URL[portafolios]}/proyectos/$PID" "${cA[@]}" | json datos.avance_pct)
         [ "$DESPUES" != "$ANTES" ] && break
       done
       printf '\n'
@@ -160,11 +177,11 @@ titulo "6. El data lake recibe los eventos"
 
 if [ -n "${URL[analitico]:-}" ]; then
   hoy=$(date -u +%F)
-  n=$(curl -s "${URL[analitico]}/eventos?fecha=$hoy&limite=5" "${cA[@]}" | json "['meta']['total']")
+  n=$(curl -s "${URL[analitico]}/eventos?fecha=$hoy&limite=5" "${cA[@]}" | json meta.total)
   [ -n "$n" ] && [ "$n" != "0" ] \
     && verde "hay $n objetos escritos hoy en S3 para Acme" \
     || gris "aun no hay objetos de hoy en S3 (si el worker acaba de correr, espera un momento)"
-  ev=$(curl -s "${URL[analitico]}/kpis" "${cA[@]}" | json "['datos']['eventos_procesados']")
+  ev=$(curl -s "${URL[analitico]}/kpis" "${cA[@]}" | json datos.eventos_procesados)
   [ -n "$ev" ] && verde "agregados: $ev eventos procesados en total"
 else
   gris "ms-analitico no desplegado"
