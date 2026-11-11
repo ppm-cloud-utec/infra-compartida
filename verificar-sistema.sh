@@ -137,8 +137,16 @@ c=$(codigo "${URL[identidad]}/usuarios/admin@acme.com.pe" "${cA[@]}")
 titulo "5. EDA: completar una tarea recalcula el avance sin llamar a nadie mas"
 
 if [ -n "${URL[tareas]:-}" ] && [ -n "${URL[portafolios]:-}" ]; then
-  # Un proyecto en curso con tareas pendientes
-  PID=$(curl -s "${URL[portafolios]}/proyectos?estado=en_curso&limite=1" "${cA[@]}" | json datos.0.id)
+  # Buscar un proyecto en curso que SI tenga tareas pendientes.
+  # Tomar siempre el primero no sirve: cada corrida le completa una tarea y
+  # al cabo de unas cuantas se queda sin pendientes, y la prueba se omite
+  # justo cuando es la mas importante de la demo.
+  PID=""
+  for cand in $(curl -s "${URL[portafolios]}/proyectos?estado=en_curso&limite=12" "${cA[@]}" \
+                 | python3 -c 'import sys,json;[print(p["id"]) for p in json.load(sys.stdin)["datos"]]' 2>/dev/null); do
+    hay=$(curl -s "${URL[tareas]}/proyectos/$cand/tareas?estado=pendiente&limite=1" "${cA[@]}" | json meta.total)
+    if [ "${hay:-0}" != "0" ]; then PID=$cand; break; fi
+  done
   if [ -n "$PID" ]; then
     ANTES=$(curl -s "${URL[portafolios]}/proyectos/$PID" "${cA[@]}" | json datos.avance_pct)
     TID=$(curl -s "${URL[tareas]}/proyectos/$PID/tareas?estado=pendiente&limite=1" "${cA[@]}" | json datos.0.tarea_id)
@@ -166,7 +174,7 @@ if [ -n "${URL[tareas]:-}" ] && [ -n "${URL[portafolios]:-}" ]; then
       gris "el proyecto $PID no tiene tareas pendientes"
     fi
   else
-    gris "no hay proyectos en curso en Acme"
+    gris "ningun proyecto en curso de Acme tiene tareas pendientes"
   fi
 else
   gris "faltan ms-tareas o ms-portafolios: no se puede verificar el flujo de eventos"
