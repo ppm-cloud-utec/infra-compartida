@@ -88,6 +88,14 @@ acceso público por las limitaciones del laboratorio.
 Los permisos mínimos que cada microservicio necesitaría están comentados en su
 `serverless.yml` para documentar la intención.
 
+## Probar los endpoints
+
+Colección de Postman lista para importar en
+[`postman/`](postman/PPM-CS2032.postman_collection.json): 26 peticiones a los 6
+microservicios, con el token guardándose solo al hacer login. Incluye las
+carpetas que demuestran el 401 sin token, el aislamiento entre tenants y el
+flujo de eventos. Ver [postman/LEEME.md](postman/LEEME.md).
+
 ## Documentación del proyecto
 
 | Documento | Qué contiene |

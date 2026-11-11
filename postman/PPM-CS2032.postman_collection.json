@@ -1,0 +1,641 @@
+{
+  "info": {
+    "name": "PPM — CS2032 Grupo 4",
+    "description": "SaaS de Project Portfolio Management. 6 microservicios serverless\nmulti-tenant en AWS.\n\nCOMO USARLA\n1. Corre '1. Login Acme'. El token se guarda SOLO en la variable\n   {{token}} y lo usan todas las demas peticiones.\n2. Para cambiar de tenant, corre '1. Login Globex'.\n\nEl tenant_id viaja DENTRO del token, nunca en la URL ni en el body.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "identidad",
+      "value": "https://hw5b5suj23.execute-api.us-east-1.amazonaws.com/dev"
+    },
+    {
+      "key": "portafolios",
+      "value": "https://c78c035rtl.execute-api.us-east-1.amazonaws.com/dev"
+    },
+    {
+      "key": "tareas",
+      "value": "https://yq369o7q4k.execute-api.us-east-1.amazonaws.com/dev"
+    },
+    {
+      "key": "recursos",
+      "value": "https://sitxbs7ytj.execute-api.us-east-1.amazonaws.com/dev"
+    },
+    {
+      "key": "presupuestos",
+      "value": "https://xqk5r0tbq3.execute-api.us-east-1.amazonaws.com/dev"
+    },
+    {
+      "key": "analitico",
+      "value": "https://dvynil8hte.execute-api.us-east-1.amazonaws.com/dev"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "password",
+      "value": "Demo1234"
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Demostrar que estan PROTEGIDOS",
+      "item": [
+        {
+          "name": "GET /health SIN token -> 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{identidad}}/health",
+              "host": [
+                "{{identidad}}/health"
+              ]
+            },
+            "description": "La palabra 'protegidos' del enunciado. Sin token, API Gateway\nresponde 401 ANTES de llegar a la Lambda."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401 sin token', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /proyectos SIN token -> 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{portafolios}}/proyectos",
+              "host": [
+                "{{portafolios}}/proyectos"
+              ]
+            },
+            "description": "Lo mismo en otro microservicio: el authorizer es compartido."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401 sin token', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. Login",
+      "item": [
+        {
+          "name": "1. Login Acme",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{identidad}}/login",
+              "host": [
+                "{{identidad}}/login"
+              ]
+            },
+            "description": "Devuelve el JWT con el tenant_id adentro. El script guarda el token.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant_id\": \"t-acme\",\n  \"email\": \"admin@acme.com.pe\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.test('Devuelve token', () => pm.expect(r.datos.token).to.be.a('string'));",
+                  "pm.collectionVariables.set('token', r.datos.token);",
+                  "console.log('Tenant activo:', r.datos.usuario.tenant_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1. Login Globex",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{identidad}}/login",
+              "host": [
+                "{{identidad}}/login"
+              ]
+            },
+            "description": "Cambia de organizacion. Las mismas peticiones devolveran otros datos.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant_id\": \"t-globex\",\n  \"email\": \"admin@globex.com\",\n  \"password\": \"{{password}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "pm.collectionVariables.set('token', r.datos.token);",
+                  "console.log('Tenant activo:', r.datos.usuario.tenant_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /tenants (publico)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{identidad}}/tenants",
+              "host": [
+                "{{identidad}}/tenants"
+              ]
+            },
+            "description": "Las 3 organizaciones. Alimenta el selector del login."
+          }
+        },
+        {
+          "name": "GET /perfil",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{identidad}}/perfil",
+              "host": [
+                "{{identidad}}/perfil"
+              ]
+            },
+            "description": "Quien soy, segun el token."
+          }
+        },
+        {
+          "name": "GET /usuarios",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{identidad}}/usuarios?limite=5",
+              "host": [
+                "{{identidad}}/usuarios?limite=5"
+              ]
+            },
+            "description": "Usuarios del tenant del token. Hay 10,001 por tenant."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. AISLAMIENTO entre tenants",
+      "item": [
+        {
+          "name": "Con token de Globex: usuario de Acme -> 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{identidad}}/usuarios/admin@acme.com.pe",
+              "host": [
+                "{{identidad}}/usuarios/admin@acme.com.pe"
+              ]
+            },
+            "description": "ESTE ES EL QUE IMPORTA. El usuario existe, pero no en la\nparticion de Globex. Corre antes '1. Login Globex'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No ve datos del otro tenant', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Con token de Acme: su propio usuario -> 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{identidad}}/usuarios/admin@acme.com.pe",
+              "host": [
+                "{{identidad}}/usuarios/admin@acme.com.pe"
+              ]
+            },
+            "description": "El mismo endpoint, con el token correcto. Corre antes '1. Login Acme'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Si ve lo suyo', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. ms-portafolios",
+      "item": [
+        {
+          "name": "GET /portafolios",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{portafolios}}/portafolios",
+              "host": [
+                "{{portafolios}}/portafolios"
+              ]
+            },
+            "description": "Con el resumen de sus proyectos."
+          }
+        },
+        {
+          "name": "GET /proyectos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{portafolios}}/proyectos?limite=5",
+              "host": [
+                "{{portafolios}}/proyectos?limite=5"
+              ]
+            },
+            "description": "Filtrable y paginado."
+          }
+        },
+        {
+          "name": "GET /proyectos en riesgo",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{portafolios}}/proyectos?en_riesgo=true&limite=5",
+              "host": [
+                "{{portafolios}}/proyectos?en_riesgo=true&limite=5"
+              ]
+            },
+            "description": "Los que cruzaron el 90% de presupuesto. Los marca el worker, no la API."
+          }
+        },
+        {
+          "name": "GET /propuestas (bandeja de admision)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{portafolios}}/propuestas?estado=pendiente",
+              "host": [
+                "{{portafolios}}/propuestas?estado=pendiente"
+              ]
+            },
+            "description": "Rankeadas por score de prioridad."
+          }
+        },
+        {
+          "name": "GET /priorizacion",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{portafolios}}/priorizacion?seleccion=1,2,3",
+              "host": [
+                "{{portafolios}}/priorizacion?seleccion=1,2,3"
+              ]
+            },
+            "description": "Ranking MAS si la seleccion excede el presupuesto disponible.\nMira el bloque 'meta' de la respuesta."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. EL EDA (lo mas importante)",
+      "item": [
+        {
+          "name": "a) Avance ANTES",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{portafolios}}/proyectos/1",
+              "host": [
+                "{{portafolios}}/proyectos/1"
+              ]
+            },
+            "description": "Anota el campo avance_pct."
+          }
+        },
+        {
+          "name": "b) Tareas pendientes del proyecto",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{tareas}}/proyectos/1/tareas?estado=pendiente&limite=3",
+              "host": [
+                "{{tareas}}/proyectos/1/tareas?estado=pendiente&limite=3"
+              ]
+            },
+            "description": "Copia un tarea_id para el siguiente paso."
+          }
+        },
+        {
+          "name": "c) COMPLETAR una tarea",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{tareas}}/proyectos/1/tareas/PEGA_AQUI_EL_TAREA_ID/completar",
+              "host": [
+                "{{tareas}}/proyectos/1/tareas/PEGA_AQUI_EL_TAREA_ID/completar"
+              ]
+            },
+            "description": "Esto llama SOLO a ms-tareas. Publica tarea.completada en SNS."
+          }
+        },
+        {
+          "name": "d) Avance DESPUES (espera ~3s)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{portafolios}}/proyectos/1",
+              "host": [
+                "{{portafolios}}/proyectos/1"
+              ]
+            },
+            "description": "El avance_pct CAMBIO. Nadie llamo a ms-portafolios: lo recalculo\nsu worker al recibir el evento por SQS. Eso es el EDA."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. ms-recursos",
+      "item": [
+        {
+          "name": "GET /carga (Workload)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{recursos}}/carga",
+              "host": [
+                "{{recursos}}/carga"
+              ]
+            },
+            "description": "Ocupacion de cada persona. Mira el bloque 'meta' con el resumen."
+          }
+        },
+        {
+          "name": "GET /recursos sobreasignados",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{recursos}}/recursos?sobreasignados=true&limite=5",
+              "host": [
+                "{{recursos}}/recursos?sobreasignados=true&limite=5"
+              ]
+            },
+            "description": "Los que pasan del 100% de su capacidad."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. ms-presupuestos",
+      "item": [
+        {
+          "name": "GET /ejecucion",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{presupuestos}}/ejecucion",
+              "host": [
+                "{{presupuestos}}/ejecucion"
+              ]
+            },
+            "description": "Totales del tenant."
+          }
+        },
+        {
+          "name": "GET /presupuestos en alerta",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{presupuestos}}/presupuestos?en_alerta=true&limite=5",
+              "host": [
+                "{{presupuestos}}/presupuestos?en_alerta=true&limite=5"
+              ]
+            },
+            "description": "Los que cruzaron el 90%."
+          }
+        },
+        {
+          "name": "GET /presupuestos/1",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{presupuestos}}/presupuestos/1",
+              "host": [
+                "{{presupuestos}}/presupuestos/1"
+              ]
+            },
+            "description": "Detalle con partidas, ultimos gastos y proyeccion de horas-hombre."
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. ms-analitico",
+      "item": [
+        {
+          "name": "GET /kpis",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{analitico}}/kpis",
+              "host": [
+                "{{analitico}}/kpis"
+              ]
+            },
+            "description": "El dashboard ejecutivo. Sale de los agregados que mantienen los eventos."
+          }
+        },
+        {
+          "name": "GET /kpis/serie",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{analitico}}/kpis/serie",
+              "host": [
+                "{{analitico}}/kpis/serie"
+              ]
+            },
+            "description": "Evolucion mes a mes."
+          }
+        },
+        {
+          "name": "GET /eventos (el data lake en S3)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{analitico}}/eventos?limite=10",
+              "host": [
+                "{{analitico}}/eventos?limite=10"
+              ]
+            },
+            "description": "Los objetos crudos escritos en S3. Es la prueba visible del EDA."
+          }
+        }
+      ]
+    }
+  ]
+}
