@@ -197,3 +197,50 @@ for r in ms-analitico ms-presupuestos ms-recursos ms-tareas ms-portafolios ms-id
 done
 cd ../infra-compartida && npx serverless remove
 ```
+
+## Al reencender el Learner Lab: revisar los disparadores
+
+Apagar el lab aplica la politica `voc-cancel-cred`, que deniega los permisos de
+`LabRole`. Las Lambdas corren con ese rol, asi que dejan de poder leer
+DynamoDB, RDS y S3 — pero ademas **AWS deshabilita los event source mappings**
+(los disparadores SQS y de DynamoDB Streams) y **no los vuelve a activar solo**
+cuando el lab arranca.
+
+Es la falla mas enganosa del proyecto, porque todo lo demas se ve sano:
+
+- los 6 microservicios responden 200,
+- las colas se ven **vacias**, pero porque nadie encola, no porque se haya
+  procesado todo,
+- las DLQ estan vacias por la misma razon,
+- y el unico sintoma es que completar una tarea no mueve el avance.
+
+Diagnostico y arreglo:
+
+```bash
+# ver cuales estan caidos
+aws lambda list-event-source-mappings \
+  --query 'EventSourceMappings[].[FunctionArn,State,UUID]' --output text
+
+# reactivar cada uno (tarda 1-2 min en quedar Enabled)
+aws lambda update-event-source-mapping --uuid <UUID> --enabled
+```
+
+Son 5: `ms-tareas-dev-publicarTareas`, `ms-portafolios-dev-worker`,
+`ms-presupuestos-dev-worker`, `ms-analitico-dev-ingesta` y
+`ms-analitico-dev-notificador`.
+
+`verificar-sistema.sh` ya lo comprueba en su seccion 8 y escupe el comando
+exacto. **Correrlo es obligatorio antes de cualquier demo.**
+
+### Y la region
+
+El bloque que AWS Academy da para `~/.aws/credentials` **no trae la region**.
+Si falta, el CLI falla con `NoRegion`. Queda fijada aparte en `~/.aws/config`:
+
+```ini
+[default]
+region = us-east-1
+output = json
+```
+
+Ese archivo no caduca, asi que solo se crea una vez.

@@ -220,6 +220,34 @@ for c in portafolios presupuestos analitico alertas; do
   fi
 done
 
+titulo "8. Disparadores de eventos (lo primero que se cae al apagar el lab)"
+
+# Cuando el Learner Lab se apaga, LabRole pierde permisos y AWS deshabilita
+# SOLO los event source mappings. Las Lambdas, las colas y el SNS siguen
+# pareciendo sanos: las colas se ven vacias porque nadie encola, no porque
+# todo se haya procesado. Sin esta comprobacion el EDA falla sin explicacion.
+mapeos=$(aws lambda list-event-source-mappings --region "$REGION" \
+           --query 'EventSourceMappings[?starts_with(FunctionArn, `arn:aws:lambda:'"$REGION"':`)].[FunctionArn,State,UUID]' \
+           --output text 2>/dev/null | grep -E 'ms-(tareas|portafolios|presupuestos|analitico)-'"$STAGE"'-')
+
+if [ -z "$mapeos" ]; then
+  gris "no se encontraron disparadores (revisa que los stacks esten desplegados)"
+else
+  apagados=0
+  while read -r arn estado uuid; do
+    [ -z "$arn" ] && continue
+    nombre=${arn##*:}
+    if [ "$estado" = "Enabled" ]; then
+      verde "$nombre activo"
+    else
+      rojo "$nombre esta $estado — reactivalo con:"
+      printf '         aws lambda update-event-source-mapping --uuid %s --enabled\n' "$uuid"
+      apagados=$((apagados+1))
+    fi
+  done <<< "$mapeos"
+  [ "$apagados" -gt 0 ] && printf '         \033[31mTardan 1-2 min en quedar Enabled; repite esta prueba despues.\033[0m\n'
+fi
+
 # --------------------------------------------------------------- resumen
 printf '\n\033[1m%s\033[0m\n' "RESULTADO"
 printf '  %d correctas · %d fallidas · %d omitidas\n' "$ok" "$fallo" "$omitido"
