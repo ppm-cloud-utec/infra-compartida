@@ -232,6 +232,12 @@ Son 5: `ms-tareas-dev-publicarTareas`, `ms-portafolios-dev-worker`,
 `verificar-sistema.sh` ya lo comprueba en su seccion 8 y escupe el comando
 exacto. **Correrlo es obligatorio antes de cualquier demo.**
 
+**Tras reactivarlos, la primera corrida del script suele fallar en la seccion 5
+(el EDA).** No es un error: los consumidores tardan alrededor de un minuto en
+empezar a leer de verdad aunque la consola ya los muestre `Enabled`. Vuelve a
+correr el script y pasa. Por eso conviene hacer esto con 15 minutos de margen y
+no justo antes de exponer.
+
 ### Y la region
 
 El bloque que AWS Academy da para `~/.aws/credentials` **no trae la region**.
