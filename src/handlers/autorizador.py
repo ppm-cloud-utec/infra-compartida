@@ -14,7 +14,12 @@ import re
 
 import jwt
 
-SECRETO = os.environ["JWT_SECRET"]
+from src import secretos
+
+# El secreto ya no viaja en el entorno de la Lambda: solo su nombre.
+# Ver src/secretos.py.
+def _secreto():
+    return secretos.de_entorno("JWT_SECRET_NOMBRE")
 
 
 def _recurso_comodin(method_arn):
@@ -61,7 +66,7 @@ def manejar(event, context):
         raise Exception("Unauthorized")
 
     try:
-        datos = jwt.decode(token, SECRETO, algorithms=["HS256"])
+        datos = jwt.decode(token, _secreto(), algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
         raise Exception("Unauthorized")
     except jwt.PyJWTError:

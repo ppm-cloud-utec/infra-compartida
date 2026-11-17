@@ -22,7 +22,9 @@ provider:
   iam:
     role: arn:aws:iam::${aws:accountId}:role/LabRole
   environment:
-    JWT_SECRET: ${ssm:/ppm/jwt-secret}
+    # El NOMBRE del secreto, no su valor: resolverlo aqui lo grabaria en
+    # la configuracion de la Lambda. Lo lee src/secretos.py al usarlo.
+    JWT_SECRET_NOMBRE: ppm/jwt-secret
 
 package:
   patterns:
