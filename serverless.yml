@@ -52,6 +52,24 @@ functions:
     handler: src/handlers/autorizador.manejar
     name: ppm-autorizador-${sls:stage}
 
+  # ---------- Aprovisionamiento de tenants (Step Functions) ----------
+  # Pasos que no pertenecen a ningun microservicio de negocio. Los invoca la
+  # maquina de estados ppm-aprovisionar-tenant, definida mas abajo.
+  validarTenant:
+    handler: src/handlers/tenants.validar
+    name: ppm-validar-tenant-${sls:stage}
+    description: Valida la peticion de alta antes de crear nada
+
+  publicarTenants:
+    handler: src/handlers/tenants.publicar
+    name: ppm-publicar-tenants-${sls:stage}
+    description: Habilita el tenant escribiendo /ppm/tenants
+
+  retirarTenant:
+    handler: src/handlers/tenants.retirar
+    name: ppm-retirar-tenant-${sls:stage}
+    description: "Rollback: saca el tenant de /ppm/tenants"
+
 resources:
   Resources:
 
@@ -148,7 +166,395 @@ resources:
         MultiAZ: false
         DeletionProtection: false
 
+    # ---------- Orquestacion del alta de tenants ----------
+    # Crear una organizacion son 6 pasos en orden, cualquiera puede
+    # fallar, y si falla el cuarto hay que deshacer los tres anteriores.
+    # Eso es una maquina de estados, no una Lambda con try/except: aqui
+    # los reintentos, el paralelismo y la compensacion son declarativos,
+    # y cada ejecucion queda registrada paso a paso.
+    MaquinaAprovisionarTenant:
+      Type: AWS::StepFunctions::StateMachine
+      Properties:
+        StateMachineName: ppm-aprovisionar-tenant-${sls:stage}
+        RoleArn: arn:aws:iam::${aws:accountId}:role/LabRole
+        DefinitionString: |
+          {
+            "Comment": "Alta de una organizacion completa. Cada microservicio aprovisiona SU propia base: la maquina solo orquesta y revierte si algo falla.",
+            "StartAt": "Validar",
+            "States": {
+              "Validar": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ppm-validar-tenant-${sls:stage}",
+                "Comment": "Rechaza la peticion antes de crear nada a medias.",
+                "Retry": [
+                  {
+                    "ErrorEquals": [
+                      "Lambda.ServiceException",
+                      "Lambda.AWSLambdaException",
+                      "Lambda.SdkClientException",
+                      "Lambda.TooManyRequestsException",
+                      "States.TaskFailed"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 2.0
+                  }
+                ],
+                "Next": "Registrar identidad"
+              },
+              "Registrar identidad": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ms-identidad-${sls:stage}-aprovisionarTenant",
+                "Comment": "Registro del tenant y su primer administrador.",
+                "ResultPath": "$.identidad",
+                "Retry": [
+                  {
+                    "ErrorEquals": [
+                      "Lambda.ServiceException",
+                      "Lambda.AWSLambdaException",
+                      "Lambda.SdkClientException",
+                      "Lambda.TooManyRequestsException",
+                      "States.TaskFailed"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 2.0
+                  }
+                ],
+                "Catch": [
+                  {
+                    "ErrorEquals": [
+                      "States.ALL"
+                    ],
+                    "ResultPath": "$.error",
+                    "Next": "Compensar"
+                  }
+                ],
+                "Next": "Crear schemas"
+              },
+              "Crear schemas": {
+                "Type": "Parallel",
+                "Comment": "Las 3 bases SQL en paralelo: no dependen entre si.",
+                "Branches": [
+                  {
+                    "StartAt": "Schema portafolios",
+                    "States": {
+                      "Schema portafolios": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ms-portafolios-${sls:stage}-aprovisionarTenant",
+                        "Retry": [
+                          {
+                            "ErrorEquals": [
+                              "Lambda.ServiceException",
+                              "Lambda.AWSLambdaException",
+                              "Lambda.SdkClientException",
+                              "Lambda.TooManyRequestsException",
+                              "States.TaskFailed"
+                            ],
+                            "IntervalSeconds": 2,
+                            "MaxAttempts": 2,
+                            "BackoffRate": 2.0
+                          }
+                        ],
+                        "End": true
+                      }
+                    }
+                  },
+                  {
+                    "StartAt": "Schema recursos",
+                    "States": {
+                      "Schema recursos": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ms-recursos-${sls:stage}-aprovisionarTenant",
+                        "Retry": [
+                          {
+                            "ErrorEquals": [
+                              "Lambda.ServiceException",
+                              "Lambda.AWSLambdaException",
+                              "Lambda.SdkClientException",
+                              "Lambda.TooManyRequestsException",
+                              "States.TaskFailed"
+                            ],
+                            "IntervalSeconds": 2,
+                            "MaxAttempts": 2,
+                            "BackoffRate": 2.0
+                          }
+                        ],
+                        "End": true
+                      }
+                    }
+                  },
+                  {
+                    "StartAt": "Schema presupuestos",
+                    "States": {
+                      "Schema presupuestos": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ms-presupuestos-${sls:stage}-aprovisionarTenant",
+                        "Retry": [
+                          {
+                            "ErrorEquals": [
+                              "Lambda.ServiceException",
+                              "Lambda.AWSLambdaException",
+                              "Lambda.SdkClientException",
+                              "Lambda.TooManyRequestsException",
+                              "States.TaskFailed"
+                            ],
+                            "IntervalSeconds": 2,
+                            "MaxAttempts": 2,
+                            "BackoffRate": 2.0
+                          }
+                        ],
+                        "End": true
+                      }
+                    }
+                  }
+                ],
+                "ResultPath": "$.schemas",
+                "Catch": [
+                  {
+                    "ErrorEquals": [
+                      "States.ALL"
+                    ],
+                    "ResultPath": "$.error",
+                    "Next": "Compensar"
+                  }
+                ],
+                "Next": "Habilitar tenant"
+              },
+              "Habilitar tenant": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ppm-publicar-tenants-${sls:stage}",
+                "Comment": "Se publica AL FINAL: hasta aqui el tenant no recibe trafico.",
+                "ResultPath": "$.publicacion",
+                "Retry": [
+                  {
+                    "ErrorEquals": [
+                      "Lambda.ServiceException",
+                      "Lambda.AWSLambdaException",
+                      "Lambda.SdkClientException",
+                      "Lambda.TooManyRequestsException",
+                      "States.TaskFailed"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 2.0
+                  }
+                ],
+                "Catch": [
+                  {
+                    "ErrorEquals": [
+                      "States.ALL"
+                    ],
+                    "ResultPath": "$.error",
+                    "Next": "Compensar"
+                  }
+                ],
+                "Next": "Listo"
+              },
+              "Compensar": {
+                "Type": "Parallel",
+                "Comment": "Rollback. Deja el sistema como estaba antes del alta.",
+                "Branches": [
+                  {
+                    "StartAt": "Retirar de la lista",
+                    "States": {
+                      "Retirar de la lista": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ppm-retirar-tenant-${sls:stage}",
+                        "Retry": [
+                          {
+                            "ErrorEquals": [
+                              "Lambda.ServiceException",
+                              "Lambda.AWSLambdaException",
+                              "Lambda.SdkClientException",
+                              "Lambda.TooManyRequestsException",
+                              "States.TaskFailed"
+                            ],
+                            "IntervalSeconds": 2,
+                            "MaxAttempts": 2,
+                            "BackoffRate": 2.0
+                          }
+                        ],
+                        "Catch": [
+                          {
+                            "ErrorEquals": [
+                              "States.ALL"
+                            ],
+                            "Next": "Retirar de la lista sin efecto"
+                          }
+                        ],
+                        "End": true
+                      },
+                      "Retirar de la lista sin efecto": {
+                        "Type": "Pass",
+                        "End": true
+                      }
+                    }
+                  },
+                  {
+                    "StartAt": "Borrar identidad",
+                    "States": {
+                      "Borrar identidad": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ms-identidad-${sls:stage}-compensarTenant",
+                        "Retry": [
+                          {
+                            "ErrorEquals": [
+                              "Lambda.ServiceException",
+                              "Lambda.AWSLambdaException",
+                              "Lambda.SdkClientException",
+                              "Lambda.TooManyRequestsException",
+                              "States.TaskFailed"
+                            ],
+                            "IntervalSeconds": 2,
+                            "MaxAttempts": 2,
+                            "BackoffRate": 2.0
+                          }
+                        ],
+                        "Catch": [
+                          {
+                            "ErrorEquals": [
+                              "States.ALL"
+                            ],
+                            "Next": "Borrar identidad sin efecto"
+                          }
+                        ],
+                        "End": true
+                      },
+                      "Borrar identidad sin efecto": {
+                        "Type": "Pass",
+                        "End": true
+                      }
+                    }
+                  },
+                  {
+                    "StartAt": "Borrar schema portafolios",
+                    "States": {
+                      "Borrar schema portafolios": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ms-portafolios-${sls:stage}-compensarTenant",
+                        "Retry": [
+                          {
+                            "ErrorEquals": [
+                              "Lambda.ServiceException",
+                              "Lambda.AWSLambdaException",
+                              "Lambda.SdkClientException",
+                              "Lambda.TooManyRequestsException",
+                              "States.TaskFailed"
+                            ],
+                            "IntervalSeconds": 2,
+                            "MaxAttempts": 2,
+                            "BackoffRate": 2.0
+                          }
+                        ],
+                        "Catch": [
+                          {
+                            "ErrorEquals": [
+                              "States.ALL"
+                            ],
+                            "Next": "Borrar schema portafolios sin efecto"
+                          }
+                        ],
+                        "End": true
+                      },
+                      "Borrar schema portafolios sin efecto": {
+                        "Type": "Pass",
+                        "End": true
+                      }
+                    }
+                  },
+                  {
+                    "StartAt": "Borrar schema recursos",
+                    "States": {
+                      "Borrar schema recursos": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ms-recursos-${sls:stage}-compensarTenant",
+                        "Retry": [
+                          {
+                            "ErrorEquals": [
+                              "Lambda.ServiceException",
+                              "Lambda.AWSLambdaException",
+                              "Lambda.SdkClientException",
+                              "Lambda.TooManyRequestsException",
+                              "States.TaskFailed"
+                            ],
+                            "IntervalSeconds": 2,
+                            "MaxAttempts": 2,
+                            "BackoffRate": 2.0
+                          }
+                        ],
+                        "Catch": [
+                          {
+                            "ErrorEquals": [
+                              "States.ALL"
+                            ],
+                            "Next": "Borrar schema recursos sin efecto"
+                          }
+                        ],
+                        "End": true
+                      },
+                      "Borrar schema recursos sin efecto": {
+                        "Type": "Pass",
+                        "End": true
+                      }
+                    }
+                  },
+                  {
+                    "StartAt": "Borrar schema presupuestos",
+                    "States": {
+                      "Borrar schema presupuestos": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:ms-presupuestos-${sls:stage}-compensarTenant",
+                        "Retry": [
+                          {
+                            "ErrorEquals": [
+                              "Lambda.ServiceException",
+                              "Lambda.AWSLambdaException",
+                              "Lambda.SdkClientException",
+                              "Lambda.TooManyRequestsException",
+                              "States.TaskFailed"
+                            ],
+                            "IntervalSeconds": 2,
+                            "MaxAttempts": 2,
+                            "BackoffRate": 2.0
+                          }
+                        ],
+                        "Catch": [
+                          {
+                            "ErrorEquals": [
+                              "States.ALL"
+                            ],
+                            "Next": "Borrar schema presupuestos sin efecto"
+                          }
+                        ],
+                        "End": true
+                      },
+                      "Borrar schema presupuestos sin efecto": {
+                        "Type": "Pass",
+                        "End": true
+                      }
+                    }
+                  }
+                ],
+                "ResultPath": "$.compensacion",
+                "Next": "Fallo"
+              },
+              "Listo": {
+                "Type": "Succeed"
+              },
+              "Fallo": {
+                "Type": "Fail",
+                "Error": "AltaDeTenantFallida",
+                "Cause": "Ver $.error. El rollback ya corrio."
+              }
+            }
+          }
+
   Outputs:
+    MaquinaAprovisionarTenantArn:
+      Description: Maquina de estados que da de alta una organizacion
+      Value: !Ref MaquinaAprovisionarTenant
+
     SnsEventosArn:
       Value: !Ref SnsEventos
       Export:
