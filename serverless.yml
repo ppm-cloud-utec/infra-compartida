@@ -641,6 +641,198 @@ resources:
           gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
           gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
 
+
+    # ---------- Analitica: Glue Data Catalog + Athena sobre el data lake ----------
+    # El data lake ya esta particionado como Hive (tenant_id=/fecha=/tipo=).
+    # Glue solo describe ese formato; no copia ni mueve datos.
+    BaseGlue:
+      Type: AWS::Glue::Database
+      Properties:
+        CatalogId: !Ref AWS::AccountId
+        DatabaseInput:
+          Name: ppm_datalake_${sls:stage}
+          Description: Eventos de dominio de la plataforma PPM
+
+    TablaEventosGlue:
+      Type: AWS::Glue::Table
+      Properties:
+        CatalogId: !Ref AWS::AccountId
+        DatabaseName: !Ref BaseGlue
+        TableInput:
+          Name: eventos
+          TableType: EXTERNAL_TABLE
+          Parameters:
+            classification: json
+            # Partition projection: Athena deduce las particiones de la ruta,
+            # sin crawler ni MSCK REPAIR. tenant_id es "injected": TODA
+            # consulta tiene que filtrar por organizacion, igual que la API.
+            projection.enabled: "true"
+            projection.tenant_id.type: injected
+            projection.fecha.type: date
+            projection.fecha.format: yyyy-MM-dd
+            projection.fecha.range: 2025-01-01,NOW
+            projection.tipo.type: enum
+            projection.tipo.values: gasto.registrado,presupuesto.excedido,proyecto.creado,proyecto.priorizado,recurso.asignado,recurso.sobreasignado,tarea.completada,tarea.creada
+            # Join en vez de "${tenant_id}" literal: Serverless lo tomaria por
+            # una variable suya. Athena necesita las llaves tal cual.
+            storage.location.template:
+              Fn::Join:
+                - ""
+                - - "s3://"
+                  - !Ref BucketDatalake
+                  - "/eventos/tenant_id=$"
+                  - "{tenant_id}/fecha=$"
+                  - "{fecha}/tipo=$"
+                  - "{tipo}/"
+          PartitionKeys:
+            - { Name: tenant_id, Type: string }
+            - { Name: fecha, Type: string }
+            - { Name: tipo, Type: string }
+          StorageDescriptor:
+            Location:
+              Fn::Join: ["", ["s3://", !Ref BucketDatalake, "/eventos/"]]
+            InputFormat: org.apache.hadoop.mapred.TextInputFormat
+            OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+            SerdeInfo:
+              SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+              Parameters:
+                ignore.malformed.json: "true"
+            Columns:
+              - { Name: evento_id, Type: string }
+              - { Name: origen, Type: string }
+              - { Name: ocurrido_en, Type: string }
+              - { Name: version, Type: int }
+              - { Name: proyecto_id, Type: string }
+              - { Name: tarea_id, Type: string }
+              - { Name: avance_pct, Type: double }
+              - { Name: monto, Type: double }
+              - { Name: total_gastado, Type: double }
+              - { Name: monto_aprobado, Type: double }
+              - { Name: ejecutado_pct, Type: double }
+              - { Name: recurso_id, Type: string }
+              - { Name: horas_semana, Type: double }
+              - { Name: ocupacion_pct, Type: double }
+
+    GrupoAthena:
+      Type: AWS::Athena::WorkGroup
+      Properties:
+        Name: ppm-analitica-${sls:stage}
+        Description: Consultas SQL sobre el data lake de eventos
+        RecursiveDeleteOption: true
+        WorkGroupConfiguration:
+          EnforceWorkGroupConfiguration: true
+          # Tope por consulta: Athena cobra por byte escaneado.
+          BytesScannedCutoffPerQuery: 1073741824
+          ResultConfiguration:
+            OutputLocation:
+              Fn::Join: ["", ["s3://", !Ref BucketDatalake, "/athena-resultados/"]]
+
+    # ---------- Observabilidad: alarmas sobre las DLQ ----------
+    # Un mensaje en una DLQ es un evento que fallo 3 veces: sin alarma, nadie
+    # se entera. La alarma avisa por el mismo topic de alertas al PMO.
+
+    AlarmaDlqPortafolios:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ppm-dlq-portafolios-${sls:stage}
+        AlarmDescription: Un evento de la cola portafolios fallo 3 veces y quedo en su DLQ
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: ppm-cola-portafolios-dlq-${sls:stage}
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 0
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref SnsAlertas
+
+    AlarmaDlqPresupuestos:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ppm-dlq-presupuestos-${sls:stage}
+        AlarmDescription: Un evento de la cola presupuestos fallo 3 veces y quedo en su DLQ
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: ppm-cola-presupuestos-dlq-${sls:stage}
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 0
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref SnsAlertas
+
+    AlarmaDlqAnalitico:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ppm-dlq-analitico-${sls:stage}
+        AlarmDescription: Un evento de la cola analitico fallo 3 veces y quedo en su DLQ
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: ppm-cola-analitico-dlq-${sls:stage}
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 0
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref SnsAlertas
+
+    AlarmaDlqAlertas:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ppm-dlq-alertas-${sls:stage}
+        AlarmDescription: Un evento de la cola alertas fallo 3 veces y quedo en su DLQ
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: ppm-cola-alertas-dlq-${sls:stage}
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 0
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - !Ref SnsAlertas
+
+    TableroCloudWatch:
+      Type: AWS::CloudWatch::Dashboard
+      Properties:
+        DashboardName: ppm-plataforma-${sls:stage}
+        DashboardBody:
+          Fn::Sub:
+            - |
+              {"widgets":[
+               {"type":"metric","x":0,"y":0,"width":12,"height":6,"properties":{"title":"API Gateway: peticiones y errores","region":"${AWS::Region}","stat":"Sum","period":300,
+                "metrics":[["AWS/ApiGateway","Count","ApiName","ppm-api-${Stage}"],[".","4XXError",".","."],[".","5XXError",".","."]]}},
+               {"type":"metric","x":12,"y":0,"width":12,"height":6,"properties":{"title":"API Gateway: latencia (ms)","region":"${AWS::Region}","period":300,
+                "metrics":[["AWS/ApiGateway","Latency","ApiName","ppm-api-${Stage}",{"stat":"Average"}],["...",{"stat":"p90"}]]}},
+               {"type":"metric","x":0,"y":6,"width":12,"height":6,"properties":{"title":"Lambda: invocaciones y errores (todas)","region":"${AWS::Region}","stat":"Sum","period":300,
+                "metrics":[["AWS/Lambda","Invocations"],[".","Errors"],[".","Throttles"]]}},
+               {"type":"metric","x":12,"y":6,"width":12,"height":6,"properties":{"title":"SNS ppm-eventos: eventos publicados","region":"${AWS::Region}","stat":"Sum","period":300,
+                "metrics":[["AWS/SNS","NumberOfMessagesPublished","TopicName","ppm-eventos-${Stage}"]]}},
+               {"type":"metric","x":0,"y":12,"width":12,"height":6,"properties":{"title":"SQS: mensajes pendientes por cola","region":"${AWS::Region}","stat":"Maximum","period":300,
+                "metrics":[["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","ppm-cola-portafolios-${Stage}"],["...","ppm-cola-presupuestos-${Stage}"],["...","ppm-cola-analitico-${Stage}"],["...","ppm-cola-alertas-${Stage}"]]}},
+               {"type":"metric","x":12,"y":12,"width":12,"height":6,"properties":{"title":"DLQ: eventos fallidos (deberia ser 0)","region":"${AWS::Region}","stat":"Maximum","period":300,
+                "metrics":[["AWS/SQS","ApproximateNumberOfMessagesVisible","QueueName","ppm-cola-portafolios-dlq-${Stage}"],["...","ppm-cola-presupuestos-dlq-${Stage}"],["...","ppm-cola-analitico-dlq-${Stage}"],["...","ppm-cola-alertas-dlq-${Stage}"]]}},
+               {"type":"metric","x":0,"y":18,"width":24,"height":6,"properties":{"title":"Step Functions: altas de organizaciones","region":"${AWS::Region}","stat":"Sum","period":3600,
+                "metrics":[["AWS/States","ExecutionsSucceeded","StateMachineArn","${Maquina}"],[".","ExecutionsFailed",".","."]]}}
+              ]}
+            - Stage: ${sls:stage}
+              Maquina: !Ref MaquinaAprovisionarTenant
+
   Outputs:
     ApiId:
       Description: API Gateway unica que comparten los 6 microservicios
@@ -686,3 +878,8 @@ resources:
       Value: !GetAtt Rds.Endpoint.Address
     AutorizadorArn:
       Value: !GetAtt AutorizadorLambdaFunction.Arn
+    GrupoAthena:
+      Description: Workgroup para consultar el data lake con SQL
+      Value: !Ref GrupoAthena
+    BaseGlue:
+      Value: !Ref BaseGlue
