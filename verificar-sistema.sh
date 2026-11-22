@@ -46,15 +46,23 @@ print("" if d is None else d)
 # ---------------------------------------------------------------- descubrir
 titulo "0. Descubriendo los microservicios desplegados"
 
+# Una sola API Gateway para los 6 microservicios: cada uno vive bajo su
+# prefijo. El stack de cada servicio debe existir; la URL sale de la API
+# compartida, no de cada stack.
+BASE=$(aws cloudformation describe-stacks --region "$REGION" \
+         --stack-name "infra-compartida-$STAGE" \
+         --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+         --output text 2>/dev/null)
+[ -z "$BASE" ] || [ "$BASE" = "None" ] && {
+  rojo "infra-compartida no expone ApiUrl: despliegala primero"; exit 1; }
+printf "  API unica: %s\n" "$BASE"
+
 declare -A URL
 for s in identidad portafolios tareas recursos presupuestos analitico; do
-  u=$(aws cloudformation describe-stacks --region "$REGION" \
-        --stack-name "ms-$s-$STAGE" \
-        --query "Stacks[0].Outputs[?OutputKey=='ServiceEndpoint'].OutputValue" \
-        --output text 2>/dev/null)
-  if [ -n "$u" ] && [ "$u" != "None" ]; then
-    URL[$s]=$u
-    verde "ms-$s  $u"
+  if aws cloudformation describe-stacks --region "$REGION" \
+       --stack-name "ms-$s-$STAGE" >/dev/null 2>&1; then
+    URL[$s]="$BASE/$s"
+    verde "ms-$s  $BASE/$s"
   else
     rojo "ms-$s no esta desplegado (no existe el stack ms-$s-$STAGE)"
   fi

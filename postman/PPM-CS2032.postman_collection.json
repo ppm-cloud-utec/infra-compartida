@@ -7,27 +7,27 @@
   "variable": [
     {
       "key": "identidad",
-      "value": "https://hw5b5suj23.execute-api.us-east-1.amazonaws.com/dev"
+      "value": "https://t8wutxmr7b.execute-api.us-east-1.amazonaws.com/dev/identidad"
     },
     {
       "key": "portafolios",
-      "value": "https://c78c035rtl.execute-api.us-east-1.amazonaws.com/dev"
+      "value": "https://t8wutxmr7b.execute-api.us-east-1.amazonaws.com/dev/portafolios"
     },
     {
       "key": "tareas",
-      "value": "https://yq369o7q4k.execute-api.us-east-1.amazonaws.com/dev"
+      "value": "https://t8wutxmr7b.execute-api.us-east-1.amazonaws.com/dev/tareas"
     },
     {
       "key": "recursos",
-      "value": "https://sitxbs7ytj.execute-api.us-east-1.amazonaws.com/dev"
+      "value": "https://t8wutxmr7b.execute-api.us-east-1.amazonaws.com/dev/recursos"
     },
     {
       "key": "presupuestos",
-      "value": "https://xqk5r0tbq3.execute-api.us-east-1.amazonaws.com/dev"
+      "value": "https://t8wutxmr7b.execute-api.us-east-1.amazonaws.com/dev/presupuestos"
     },
     {
       "key": "analitico",
-      "value": "https://dvynil8hte.execute-api.us-east-1.amazonaws.com/dev"
+      "value": "https://t8wutxmr7b.execute-api.us-east-1.amazonaws.com/dev/analitico"
     },
     {
       "key": "token",

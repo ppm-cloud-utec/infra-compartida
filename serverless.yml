@@ -552,7 +552,114 @@ resources:
             }
           }
 
+    # ---------- Puerta de entrada unica ----------
+    # Antes cada microservicio creaba su propia API Gateway: seis URLs base,
+    # seis lugares donde configurar CORS y seis copias del mismo authorizer.
+    # Ahora hay una sola API y cada microservicio cuelga sus rutas bajo su
+    # propio prefijo (/identidad, /portafolios, ...). Los servicios siguen
+    # desplegandose por separado: lo que se comparte es la puerta, no el
+    # despliegue.
+    ApiPpm:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: ppm-api-${sls:stage}
+        Description: Entrada unica de los 6 microservicios del PPM
+        EndpointConfiguration:
+          Types: [REGIONAL]
+
+    # El authorizer se registra UNA vez sobre la API compartida. Si cada
+    # servicio lo declarara, habria seis authorizers con el mismo nombre
+    # sobre la misma API.
+    AutorizadorApi:
+      Type: AWS::ApiGateway::Authorizer
+      Properties:
+        Name: autorizadorCompartido
+        RestApiId: !Ref ApiPpm
+        Type: REQUEST
+        IdentitySource: method.request.header.Authorization
+        AuthorizerResultTtlInSeconds: 300
+        AuthorizerUri:
+          Fn::Join:
+            - ""
+            - - "arn:aws:apigateway:${aws:region}:lambda:path/2015-03-31/functions/"
+              - !GetAtt AutorizadorLambdaFunction.Arn
+              - "/invocations"
+
+    PermisoAutorizador:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName: !GetAtt AutorizadorLambdaFunction.Arn
+        Action: lambda:InvokeFunction
+        Principal: apigateway.amazonaws.com
+        SourceArn:
+          Fn::Join:
+            - ""
+            - - "arn:aws:execute-api:${aws:region}:${aws:accountId}:"
+              - !Ref ApiPpm
+              - "/authorizers/"
+              - !Ref AutorizadorApi
+
+    # Errores que genera la propia API Gateway (401 del authorizer, 5xx de
+    # integracion): sin CORS el navegador los reporta como error de red y el
+    # frontend no puede distinguir "tu sesion vencio" de "no hay servidor".
+    # Viven aqui porque son de la API, no de ningun microservicio.
+    Cors401:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        RestApiId: !Ref ApiPpm
+        ResponseType: UNAUTHORIZED
+        StatusCode: "401"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+
+    Cors403:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        RestApiId: !Ref ApiPpm
+        ResponseType: ACCESS_DENIED
+        StatusCode: "403"
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+
+    Cors4xx:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        RestApiId: !Ref ApiPpm
+        ResponseType: DEFAULT_4XX
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+
+    Cors5xx:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        RestApiId: !Ref ApiPpm
+        ResponseType: DEFAULT_5XX
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+
   Outputs:
+    ApiId:
+      Description: API Gateway unica que comparten los 6 microservicios
+      Value: !Ref ApiPpm
+    ApiRootResourceId:
+      Description: Recurso raiz de la API, del que cuelga el prefijo de cada servicio
+      Value: !GetAtt ApiPpm.RootResourceId
+    AutorizadorApiId:
+      Description: Authorizer registrado una sola vez sobre la API compartida
+      Value: !Ref AutorizadorApi
+    ApiUrl:
+      Description: URL base. Cada servicio vive en ApiUrl/<servicio>
+      Value:
+        Fn::Join:
+          - ""
+          - - "https://"
+            - !Ref ApiPpm
+            - ".execute-api.${aws:region}.amazonaws.com/${sls:stage}"
+
     MaquinaAprovisionarTenantArn:
       Description: Maquina de estados que da de alta una organizacion
       Value: !Ref MaquinaAprovisionarTenant
