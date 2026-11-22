@@ -1,13 +1,7 @@
 service: infra-compartida
 
-# Se usa la v3 a proposito: la v4 exige una cuenta de serverless.com y un
-# SERVERLESS_ACCESS_KEY para cada deploy. La v3 solo necesita credenciales
-# de AWS, que es lo unico que da el Learner Lab.
 frameworkVersion: "3"
 
-# Este stack crea TODO lo compartido y lo exporta por Outputs.
-# Tiene que desplegarse PRIMERO: los otros 6 microservicios lo importan con
-# ${cf:infra-compartida-dev.<Output>}.
 
 provider:
   name: aws
@@ -17,13 +11,9 @@ provider:
   memorySize: 256
   timeout: 10
   architecture: x86_64
-  # AWS Academy no permite crear roles IAM: hay que reusar LabRole.
-  # En una cuenta propia, borra esta linea y descomenta el bloque iam de abajo.
   iam:
     role: arn:aws:iam::${aws:accountId}:role/LabRole
   environment:
-    # El NOMBRE del secreto, no su valor: resolverlo aqui lo grabaria en
-    # la configuracion de la Lambda. Lo lee src/secretos.py al usarlo.
     JWT_SECRET_NOMBRE: ppm/jwt-secret
 
 package:
@@ -36,27 +26,15 @@ plugins:
 
 custom:
   pythonRequirements:
-    # true, no "non-linux": en Linux "non-linux" NO usa Docker y busca un
-    # binario python3.12 local, que no existe (el sistema trae 3.14).
-    # Forzar Docker ademas garantiza que psycopg se compile contra Amazon
-    # Linux, que es donde corre la Lambda.
     dockerizePip: true
     slim: true
-    # Cache propio por repo. El cache global de ~/.cache lo comparten todos
-    # los servicios, y si dos despliegues corren a la vez un contenedor lo
-    # deja en root:root mientras el otro lo lee -> EACCES.
     cacheLocation: ./.serverless-cache
 
 functions:
-  # Authorizer compartido por los 6 microservicios. Valida el JWT y entrega
-  # tenant_id / usuario_id / rol a la Lambda destino por el requestContext.
   autorizador:
     handler: src/handlers/autorizador.manejar
     name: ppm-autorizador-${sls:stage}
 
-  # ---------- Aprovisionamiento de tenants (Step Functions) ----------
-  # Pasos que no pertenecen a ningun microservicio de negocio. Los invoca la
-  # maquina de estados ppm-aprovisionar-tenant, definida mas abajo.
   validarTenant:
     handler: src/handlers/tenants.validar
     name: ppm-validar-tenant-${sls:stage}
@@ -86,9 +64,6 @@ resources:
       Properties:
         TopicName: ppm-alertas-${sls:stage}
 
-    # ---------- Idempotencia de los workers ----------
-    # SQS entrega at-least-once. Sin esta tabla, un evento repetido infla el
-    # avance y la ejecucion presupuestal.
     TablaEventosProcesados:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -130,11 +105,6 @@ resources:
           IgnorePublicAcls: true
           RestrictPublicBuckets: true
 
-    # ---------- RDS unico (patron Single Database, Multiple Schemas) ----------
-    # Decision documentada en docs/convenciones.md: PubliclyAccessible y las
-    # Lambdas FUERA de la VPC. Una Lambda dentro de una VPC pierde salida a
-    # SNS/S3/DynamoDB salvo con NAT Gateway o VPC Endpoints, y los 3 MS con RDS
-    # tambien publican a SNS.
     SgRds:
       Type: AWS::EC2::SecurityGroup
       Properties:
@@ -151,10 +121,6 @@ resources:
       Properties:
         DBInstanceIdentifier: ppm-rds-${sls:stage}
         Engine: postgres
-        # 16.15: la 16.4 ya no la ofrece AWS. Las versiones disponibles se
-        # consultan con:
-        #   aws rds describe-orderable-db-instance-options --engine postgres \
-        #     --db-instance-class db.t3.micro --query '*[].EngineVersion'
         EngineVersion: "16.15"
         DBInstanceClass: db.t3.micro
         AllocatedStorage: "20"
@@ -168,12 +134,6 @@ resources:
         MultiAZ: false
         DeletionProtection: false
 
-    # ---------- Orquestacion del alta de tenants ----------
-    # Crear una organizacion son 6 pasos en orden, cualquiera puede
-    # fallar, y si falla el cuarto hay que deshacer los tres anteriores.
-    # Eso es una maquina de estados, no una Lambda con try/except: aqui
-    # los reintentos, el paralelismo y la compensacion son declarativos,
-    # y cada ejecucion queda registrada paso a paso.
     MaquinaAprovisionarTenant:
       Type: AWS::StepFunctions::StateMachine
       Properties:
@@ -552,13 +512,6 @@ resources:
             }
           }
 
-    # ---------- Puerta de entrada unica ----------
-    # Antes cada microservicio creaba su propia API Gateway: seis URLs base,
-    # seis lugares donde configurar CORS y seis copias del mismo authorizer.
-    # Ahora hay una sola API y cada microservicio cuelga sus rutas bajo su
-    # propio prefijo (/identidad, /portafolios, ...). Los servicios siguen
-    # desplegandose por separado: lo que se comparte es la puerta, no el
-    # despliegue.
     ApiPpm:
       Type: AWS::ApiGateway::RestApi
       Properties:
@@ -567,9 +520,6 @@ resources:
         EndpointConfiguration:
           Types: [REGIONAL]
 
-    # El authorizer se registra UNA vez sobre la API compartida. Si cada
-    # servicio lo declarara, habria seis authorizers con el mismo nombre
-    # sobre la misma API.
     AutorizadorApi:
       Type: AWS::ApiGateway::Authorizer
       Properties:
@@ -599,10 +549,6 @@ resources:
               - "/authorizers/"
               - !Ref AutorizadorApi
 
-    # Errores que genera la propia API Gateway (401 del authorizer, 5xx de
-    # integracion): sin CORS el navegador los reporta como error de red y el
-    # frontend no puede distinguir "tu sesion vencio" de "no hay servidor".
-    # Viven aqui porque son de la API, no de ningun microservicio.
     Cors401:
       Type: AWS::ApiGateway::GatewayResponse
       Properties:
@@ -642,9 +588,6 @@ resources:
           gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
 
 
-    # ---------- Analitica: Glue Data Catalog + Athena sobre el data lake ----------
-    # El data lake ya esta particionado como Hive (tenant_id=/fecha=/tipo=).
-    # Glue solo describe ese formato; no copia ni mueve datos.
     BaseGlue:
       Type: AWS::Glue::Database
       Properties:
@@ -663,9 +606,6 @@ resources:
           TableType: EXTERNAL_TABLE
           Parameters:
             classification: json
-            # Partition projection: Athena deduce las particiones de la ruta,
-            # sin crawler ni MSCK REPAIR. tenant_id es "injected": TODA
-            # consulta tiene que filtrar por organizacion, igual que la API.
             projection.enabled: "true"
             projection.tenant_id.type: injected
             projection.fecha.type: date
@@ -673,8 +613,6 @@ resources:
             projection.fecha.range: 2025-01-01,NOW
             projection.tipo.type: enum
             projection.tipo.values: gasto.registrado,presupuesto.excedido,proyecto.creado,proyecto.priorizado,recurso.asignado,recurso.sobreasignado,tarea.completada,tarea.creada
-            # Join en vez de "${tenant_id}" literal: Serverless lo tomaria por
-            # una variable suya. Athena necesita las llaves tal cual.
             storage.location.template:
               Fn::Join:
                 - ""
@@ -727,9 +665,6 @@ resources:
             OutputLocation:
               Fn::Join: ["", ["s3://", !Ref BucketDatalake, "/athena-resultados/"]]
 
-    # ---------- Observabilidad: alarmas sobre las DLQ ----------
-    # Un mensaje en una DLQ es un evento que fallo 3 veces: sin alarma, nadie
-    # se entera. La alarma avisa por el mismo topic de alertas al PMO.
 
     AlarmaDlqPortafolios:
       Type: AWS::CloudWatch::Alarm

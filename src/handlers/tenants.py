@@ -1,15 +1,4 @@
-"""Pasos de plataforma de la maquina de estados `ppm-aprovisionar-tenant`.
-
-Aqui viven los dos pasos que no pertenecen a ningun microservicio de negocio:
-validar la peticion antes de tocar nada, y publicar la lista de tenants
-vigentes cuando todo lo demas salio bien.
-
-La lista en /ppm/tenants es la que leen ms-portafolios, ms-recursos y
-ms-presupuestos para saber que schema pueden abrir. Se escribe AL FINAL a
-proposito: hasta que las tres bases no esten listas, el tenant no debe poder
-recibir trafico. Publicarla antes dejaria una ventana en la que el login
-funciona y las consultas revientan.
-"""
+"""Pasos de plataforma de la maquina de estados `ppm-aprovisionar-tenant`."""
 import json
 import re
 
@@ -26,7 +15,6 @@ def _lista_actual(ssm):
         valor = ssm.get_parameter(Name=PARAMETRO)["Parameter"]["Value"]
         return json.loads(valor)
     except ssm.exceptions.ParameterNotFound:
-        # Primera vez: la lista arranca con los tres que creo bases.sh.
         return list(ORIGINALES)
 
 
@@ -70,7 +58,6 @@ def publicar(event, context):
         Overwrite=True,
         Description="Tenants habilitados. Lo escribe ppm-aprovisionar-tenant.",
     )
-    # Las Lambdas de negocio lo releen solas cuando vence su cache (60s).
     return {"tenant_id": tenant_id, "habilitados": sorted(lista),
             "demora_propagacion_s": 60}
 

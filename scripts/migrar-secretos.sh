@@ -32,7 +32,6 @@ guardar "ppm/jwt-secret" "$(ssm /ppm/jwt-secret)" \
 for ms in portafolios recursos presupuestos; do
   USUARIO=$(ssm "/ppm/$ms/db-user")
   CLAVE=$(ssm "/ppm/$ms/db-password")
-  # JSON, como hace el resto de AWS con credenciales de base de datos.
   guardar "ppm/$ms/db" \
     "$(python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"password":sys.argv[2]}))' "$USUARIO" "$CLAVE")" \
     "Credenciales de ms-$ms contra su database en el RDS compartido"

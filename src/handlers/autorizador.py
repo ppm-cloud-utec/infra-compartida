@@ -1,14 +1,4 @@
-"""Lambda Authorizer compartido por los 6 microservicios.
-
-Valida la firma del JWT que emitio ms-identidad y entrega tenant_id, usuario_id,
-rol y email a la Lambda destino por el requestContext. Ningun microservicio
-llama a ms-identidad por HTTP: todos verifican la firma localmente con el mismo
-JWT_SECRET.
-
-Es un authorizer de tipo REQUEST sobre API Gateway REST (v1), asi que la
-respuesta tiene que ser un documento de politica IAM. Devolver {"isAuthorized":
-true} es el formato de HTTP API (v2) y aqui no funciona.
-"""
+"""Lambda Authorizer compartido por los 6 microservicios."""
 import os
 import re
 
@@ -16,22 +6,12 @@ import jwt
 
 from src import secretos
 
-# El secreto ya no viaja en el entorno de la Lambda: solo su nombre.
-# Ver src/secretos.py.
 def _secreto():
     return secretos.de_entorno("JWT_SECRET_NOMBRE")
 
 
 def _recurso_comodin(method_arn):
-    """Convierte el ARN del metodo invocado en un comodin para todo el API.
-
-    El resultado se cachea por token (resultTtlInSeconds), asi que si la
-    politica apuntara solo al metodo llamado, la segunda ruta que use el mismo
-    token recibiria un 403 del cache.
-
-        arn:aws:execute-api:us-east-1:123:abc/dev/GET/usuarios
-     -> arn:aws:execute-api:us-east-1:123:abc/dev/*/*
-    """
+    """Convierte el ARN del metodo invocado en un comodin para todo el API."""
     m = re.match(r"^(arn:aws:execute-api:[^:]+:\d+:[^/]+/[^/]+)/", method_arn)
     return f"{m.group(1)}/*/*" if m else method_arn
 
@@ -49,8 +29,6 @@ def _politica(principal, recurso, efecto, contexto=None):
                 }
             ],
         },
-        # Los valores del contexto solo pueden ser cadenas, numeros o booleanos:
-        # API Gateway descarta en silencio cualquier objeto anidado.
         "context": contexto or {},
     }
 
@@ -60,8 +38,6 @@ def manejar(event, context):
     bruto = cabeceras.get("Authorization") or cabeceras.get("authorization") or ""
     token = bruto.removeprefix("Bearer ").removeprefix("bearer ").strip()
 
-    # Levantar "Unauthorized" es lo que hace que API Gateway responda 401.
-    # Devolver una politica Deny daria 403, que significa otra cosa.
     if not token:
         raise Exception("Unauthorized")
 

@@ -24,10 +24,6 @@ rojo()    { printf '  \033[31mFALLO\033[0m  %s\n' "$1"; fallo=$((fallo+1)); }
 gris()    { printf '  \033[90mOMIT\033[0m  %s\n' "$1"; omitido=$((omitido+1)); }
 titulo()  { printf '\n\033[1m%s\033[0m\n' "$1"; }
 codigo()  { curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$@"; }
-# Extrae un valor del JSON por una ruta con puntos: json datos.token
-# No usa eval: la version anterior generaba eval('d['datos']['token']') y las
-# comillas simples chocaban, asi que SIEMPRE devolvia vacio y el script
-# reportaba fallos que no existian.
 json() {
   python3 -c '
 import sys, json
@@ -43,12 +39,8 @@ print("" if d is None else d)
 ' "$1" 2>/dev/null
 }
 
-# ---------------------------------------------------------------- descubrir
 titulo "0. Descubriendo los microservicios desplegados"
 
-# Una sola API Gateway para los 6 microservicios: cada uno vive bajo su
-# prefijo. El stack de cada servicio debe existir; la URL sale de la API
-# compartida, no de cada stack.
 BASE=$(aws cloudformation describe-stacks --region "$REGION" \
          --stack-name "infra-compartida-$STAGE" \
          --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
@@ -73,7 +65,6 @@ done
   exit 1
 }
 
-# ------------------------------------------------------------------- login
 titulo "1. Login en dos tenants (la demo usa estos dos)"
 
 entrar() {
@@ -92,7 +83,6 @@ TOK_G=$(entrar t-globex admin@globex.com  | json datos.token)
 cA=(-H "Authorization: Bearer $TOK_A")
 cG=(-H "Authorization: Bearer $TOK_G")
 
-# El tenant_id viaja DENTRO del token, no en la URL ni en el body
 for par in "identidad:t-acme:A" "identidad:t-globex:G"; do
   IFS=: read -r s esperado tok <<< "$par"
   t=$([ "$tok" = A ] && curl -s "${URL[$s]}/health" "${cA[@]}" || curl -s "${URL[$s]}/health" "${cG[@]}")
@@ -101,7 +91,6 @@ for par in "identidad:t-acme:A" "identidad:t-globex:G"; do
     || rojo "el token se resuelve a '$real', se esperaba $esperado"
 done
 
-# ------------------------------------------------- endpoints protegidos
 titulo "2. Los 6 microservicios rechazan peticiones sin token"
 
 for s in "${!URL[@]}"; do
@@ -117,7 +106,6 @@ for s in "${!URL[@]}"; do
   [ "$c" = 200 ] && verde "ms-$s con token -> 200" || rojo "ms-$s con token -> $c"
 done
 
-# --------------------------------------------------------- multi-tenancy
 titulo "4. AISLAMIENTO: cada tenant solo ve lo suyo"
 
 if [ -n "${URL[portafolios]:-}" ]; then
@@ -141,14 +129,9 @@ c=$(codigo "${URL[identidad]}/usuarios/admin@acme.com.pe" "${cG[@]}")
 c=$(codigo "${URL[identidad]}/usuarios/admin@acme.com.pe" "${cA[@]}")
 [ "$c" = 200 ] && verde "Acme pidiendo su propio usuario -> 200" || rojo "Acme pidiendo lo suyo -> $c"
 
-# ------------------------------------------------------------------- EDA
 titulo "5. EDA: completar una tarea recalcula el avance sin llamar a nadie mas"
 
 if [ -n "${URL[tareas]:-}" ] && [ -n "${URL[portafolios]:-}" ]; then
-  # Buscar un proyecto en curso que SI tenga tareas pendientes.
-  # Tomar siempre el primero no sirve: cada corrida le completa una tarea y
-  # al cabo de unas cuantas se queda sin pendientes, y la prueba se omite
-  # justo cuando es la mas importante de la demo.
   PID=""
   for cand in $(curl -s "${URL[portafolios]}/proyectos?estado=en_curso&limite=12" "${cA[@]}" \
                  | python3 -c 'import sys,json;[print(p["id"]) for p in json.load(sys.stdin)["datos"]]' 2>/dev/null); do
@@ -188,7 +171,6 @@ else
   gris "faltan ms-tareas o ms-portafolios: no se puede verificar el flujo de eventos"
 fi
 
-# ------------------------------------------------------------- data lake
 titulo "6. El data lake recibe los eventos"
 
 if [ -n "${URL[analitico]:-}" ]; then
@@ -203,7 +185,6 @@ else
   gris "ms-analitico no desplegado"
 fi
 
-# ----------------------------------------------------------------- colas
 titulo "7. Colas SQS y sus DLQ"
 
 for c in portafolios presupuestos analitico alertas; do
@@ -230,10 +211,6 @@ done
 
 titulo "8. Disparadores de eventos (lo primero que se cae al apagar el lab)"
 
-# Cuando el Learner Lab se apaga, LabRole pierde permisos y AWS deshabilita
-# SOLO los event source mappings. Las Lambdas, las colas y el SNS siguen
-# pareciendo sanos: las colas se ven vacias porque nadie encola, no porque
-# todo se haya procesado. Sin esta comprobacion el EDA falla sin explicacion.
 mapeos=$(aws lambda list-event-source-mappings --region "$REGION" \
            --query 'EventSourceMappings[?starts_with(FunctionArn, `arn:aws:lambda:'"$REGION"':`)].[FunctionArn,State,UUID]' \
            --output text 2>/dev/null | grep -E 'ms-(tareas|portafolios|presupuestos|analitico)-'"$STAGE"'-')
@@ -256,7 +233,6 @@ else
   [ "$apagados" -gt 0 ] && printf '         \033[31mTardan 1-2 min en quedar Enabled; repite esta prueba despues.\033[0m\n'
 fi
 
-# --------------------------------------------------------------- resumen
 printf '\n\033[1m%s\033[0m\n' "RESULTADO"
 printf '  %d correctas · %d fallidas · %d omitidas\n' "$ok" "$fallo" "$omitido"
 [ "$fallo" -eq 0 ] && printf '\n  \033[32mEl sistema cumple los tres pilares: multi-tenancy, serverless y EDA.\033[0m\n\n' \
