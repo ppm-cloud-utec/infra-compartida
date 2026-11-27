@@ -151,11 +151,12 @@ if [ -n "${URL[tareas]:-}" ] && [ -n "${URL[portafolios]:-}" ]; then
       for i in 1 2 3 4 5 6 7 8 9 10; do
         sleep 2; printf '.'
         DESPUES=$(curl -s "${URL[portafolios]}/proyectos/$PID" "${cA[@]}" | json datos.avance_pct)
-        [ "$DESPUES" != "$ANTES" ] && break
+        # una respuesta vacia (corte de red) no cuenta como cambio
+        [ -n "$DESPUES" ] && [ "$DESPUES" != "$ANTES" ] && break
       done
       printf '\n'
 
-      if [ "$DESPUES" != "$ANTES" ]; then
+      if [ -n "$DESPUES" ] && [ "$DESPUES" != "$ANTES" ]; then
         verde "ms-portafolios paso de $ANTES% a $DESPUES% SIN que nadie se lo pidiera"
         verde "   (SNS -> SQS -> worker, con el frontend fuera del circuito)"
       else
