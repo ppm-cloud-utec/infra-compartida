@@ -44,6 +44,8 @@ PY
 
 echo "1. Envio un evento malformado a ppm-cola-presupuestos-$STAGE"
 echo "   recurso_id = \"no-es-un-id\"   evento_id = $EVENTO_ID"
+BASE=$(contar "$DLQ")   # lo que ya habia en la DLQ (de pruebas anteriores)
+[ "$BASE" != "0" ] && echo "   (la DLQ ya tenia $BASE mensaje(s); espero a que llegue uno mas)"
 aws sqs send-message --region $REGION --queue-url "$COLA" --message-body "$CUERPO" >/dev/null
 INICIO=$(date +%s)
 
@@ -54,7 +56,7 @@ while :; do
   t=$(( $(date +%s) - INICIO ))
   en_dlq=$(contar "$DLQ")
   printf '   %3ds  en cola: %s   en DLQ: %s\n' "$t" "$(contar "$COLA")" "$en_dlq"
-  [ "$en_dlq" != "0" ] && break
+  [ "$en_dlq" -gt "$BASE" ] && break
   [ $t -gt 600 ] && { echo "   No llego a la DLQ en 10 min: revisa el trigger del worker."; exit 1; }
 done
 
